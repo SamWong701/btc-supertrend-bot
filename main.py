@@ -1,48 +1,89 @@
-import time
-import requests
+import os, time, threading, requests
 import pandas as pd
 from flask import Flask
-import os
-import threading
 
-# 建立一個極簡的 Web 伺服器給 Railway 做 Healthcheck
+# --- 1. Railway 防斷線心跳 ---
 app = Flask(__name__)
-
 @app.route('/')
-def home():
-    return "Bot is running!"
+def home(): return "Spot $5000 5% Re-Harvest Running"
+threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+# --- 2. 策略參數設定 ---
+CAPITAL = 5000
+BIG_WAVE_PCT = 5.0    # 目標波段利潤 5%
+LOCK_FALL_PCT = 2.0   # 賺夠 5% 後回落 2% 鎖定
+SYMBOL = "BTCUSDT"
+INTERVAL = "1h"
+EMA_PERIOD = 20
 
-print("Supertrend Bot Starting... Web + Loop Version", flush=True)
+print(f"=== 現貨 ${CAPITAL} | 5%食盡重複收割啟動 ===", flush=True)
 
-def get_btc_data():
-    url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=100"
-    data = requests.get(url).json()
-    df = pd.DataFrame(data, columns=['open_time','open','high','low','close','vol','close_time','qav','trades','taker_base','taker_quote','ignore'])
-    df['close'] = df['close'].astype(float)
-    df['high'] = df['high'].astype(float)
-    df['low'] = df['low'].astype(float)
+def get_df():
+    url = f"https://api.binance.com/api/v3/klines?symbol={SYMBOL}&interval={INTERVAL}&limit=200"
+    r = requests.get(url, timeout=10).json()
+    # 保留原始欄位，並將數字欄位轉為 float
+    df = pd.DataFrame(r, columns=['t','o','h','l','c','v','ct','qav','tbv','tb','tq','i'])
+    for c in ['o','h','l','c','v']:
+        df[c] = df[c].astype(float)
     return df
 
-def bot_loop():
-    while True:
-        try:
-            df = get_btc_data()
-            price = df['close'].iloc[-1]
-            print(f"BTC Price: {price} - Bot is running OK", flush=True)
-            time.sleep(60)
-        except Exception as e:
-            print(f"Error: {e}, retry in 10s", flush=True)
-            time.sleep(10)
-
-if __name__ == '__main__':
-    # 用獨立執行緒（Thread）同時跑網頁伺服器同埋交易循環
-    t = threading.Thread(target=bot_loop)
-    t.daemon = True
-    t.start()
+def calc(df):
+    df['ema20'] = df['c'].ewm(span=EMA_PERIOD, adjust=False).mean()
+    df['ema20_slope'] = df['ema20'].diff(3)
     
-    # 啟動 Flask 伺服器應付 Railway 檢查
-    run_flask()
+    # 計算 True Range 與 ATR（改用 'true_range' 避免與 API 欄位衝突）
+    df['true_range'] = pd.concat([
+        df['h'] - df['l'], 
+        (df['h'] - df['c'].shift()).abs(), 
+        (df['l'] - df['c'].shift()).abs()
+    ], axis=1).max(axis=1)
+    
+    df['atr'] = df['true_range'].rolling(10).mean()
+    df['atr_avg'] = df['atr'].rolling(50).mean()
+    df['vol_avg'] = df['v'].rolling(20).mean()
+    return df
+
+# --- 3. 主循環 ---
+in_pos = False
+buy_price = highest = confirm = 0
+
+while True:
+    try:
+        df = calc(get_df())
+        price = df['c'].iloc[-1]
+        ema20 = df['ema20'].iloc[-1]
+        slope = df['ema20_slope'].iloc[-1]
+        atr, atr_avg = df['atr'].iloc[-1], df['atr_avg'].iloc[-1]
+        vol, vol_avg = df['v'].iloc[-1], df['vol_avg'].iloc[-1]
+
+        # 核心條件判斷
+        vol_expand = atr > atr_avg * 1.4
+        big_vol = vol > vol_avg * 1.8
+        cond = (price > ema20) and vol_expand and big_vol and (slope > 0)
+
+        if not in_pos:
+            confirm = confirm + 1 if cond else 0
+            print(f"觀望 | 價:{price:.0f} | EMA20:{ema20:.0f} | 擴張:{vol_expand} 量爆:{big_vol} | 確認 {confirm}/2", flush=True)
+
+            if confirm >= 2:
+                in_pos, buy_price, highest, confirm = True, price, price, 0
+                print(f">>> ✅ 買入訊號觸發！模擬下單 ${CAPITAL} @ {price:.0f}", flush=True)
+                print(f">>> 目標 +{BIG_WAVE_PCT}% = ${price*(1+BIG_WAVE_PCT/100):.0f} | 回落 {LOCK_FALL_PCT}% 鎖定", flush=True)
+        else:
+            if price > highest: highest = price
+            profit_pct = (price - buy_price) / buy_price * 100
+            fall_pct = (highest - price) / highest * 100
+
+            print(f"持倉 | 入:{buy_price:.0f} 現:{price:.0f} | 賺:{profit_pct:.2f}% | 最高:{highest:.0f} 回落:{fall_pct:.2f}%", flush=True)
+
+            if profit_pct >= BIG_WAVE_PCT and fall_pct >= LOCK_FALL_PCT:
+                earn = CAPITAL * profit_pct / 100
+                in_pos, buy_price, highest = False, 0, 0
+                print(f">>> 💰 鎖定賣出 @ {price:.0f} | 獲利 +{profit_pct:.2f}% 賺取 ${earn:.2f}", flush=True)
+                print(f">>> 重置狀態，等待下一次機會...", flush=True)
+
+        time.sleep(300) # 每 5 分鐘檢查一次
+
+    except Exception as e:
+        print(f"Error: {e}", flush=True)
+        time.sleep(30)
