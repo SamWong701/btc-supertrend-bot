@@ -1,0 +1,1 @@
+# btc-supertrend-bot
