@@ -7,8 +7,6 @@ app = Flask(__name__)
 @app.route('/')
 def home(): return "Spot $5000 5% Re-Harvest Running"
 
-print(f"=== 現貨 $5000 | 5%食盡重複收割啟動 ===", flush=True)
-
 def run_web():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 threading.Thread(target=run_web, daemon=True).start()
@@ -20,6 +18,8 @@ LOCK_FALL_PCT = 2.0
 SYMBOL = "BTCUSDT"
 INTERVAL = "1h"
 EMA_PERIOD = 20
+
+print(f"=== 現貨 ${CAPITAL} | {BIG_WAVE_PCT}%食盡重覆收割啟動 ===", flush=True)
 
 def get_df():
     url = f"https://api.binance.com/api/v3/klines?symbol={SYMBOL}&interval={INTERVAL}&limit=200"
