@@ -6,22 +6,24 @@ from flask import Flask
 app = Flask(__name__)
 @app.route('/')
 def home(): return "Spot $5000 5% Re-Harvest Running"
-threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
 
-# --- 2. 策略參數設定 ---
+print(f"=== 現貨 $5000 | 5%食盡重複收割啟動 ===", flush=True)
+
+def run_web():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+threading.Thread(target=run_web, daemon=True).start()
+
+# --- 2. 策略參數 ---
 CAPITAL = 5000
-BIG_WAVE_PCT = 5.0    # 目標波段利潤 5%
-LOCK_FALL_PCT = 2.0   # 賺夠 5% 後回落 2% 鎖定
+BIG_WAVE_PCT = 5.0
+LOCK_FALL_PCT = 2.0
 SYMBOL = "BTCUSDT"
 INTERVAL = "1h"
 EMA_PERIOD = 20
 
-print(f"=== 現貨 ${CAPITAL} | 5%食盡重複收割啟動 ===", flush=True)
-
 def get_df():
     url = f"https://api.binance.com/api/v3/klines?symbol={SYMBOL}&interval={INTERVAL}&limit=200"
     r = requests.get(url, timeout=10).json()
-    # 保留原始欄位，並將數字欄位轉為 float
     df = pd.DataFrame(r, columns=['t','o','h','l','c','v','ct','qav','tbv','tb','tq','i'])
     for c in ['o','h','l','c','v']:
         df[c] = df[c].astype(float)
@@ -30,20 +32,16 @@ def get_df():
 def calc(df):
     df['ema20'] = df['c'].ewm(span=EMA_PERIOD, adjust=False).mean()
     df['ema20_slope'] = df['ema20'].diff(3)
-    
-    # 計算 True Range 與 ATR（改用 'true_range' 避免與 API 欄位衝突）
     df['true_range'] = pd.concat([
-        df['h'] - df['l'], 
-        (df['h'] - df['c'].shift()).abs(), 
+        df['h'] - df['l'],
+        (df['h'] - df['c'].shift()).abs(),
         (df['l'] - df['c'].shift()).abs()
     ], axis=1).max(axis=1)
-    
     df['atr'] = df['true_range'].rolling(10).mean()
     df['atr_avg'] = df['atr'].rolling(50).mean()
     df['vol_avg'] = df['v'].rolling(20).mean()
     return df
 
-# --- 3. 主循環 ---
 in_pos = False
 buy_price = highest = confirm = 0
 
@@ -56,7 +54,6 @@ while True:
         atr, atr_avg = df['atr'].iloc[-1], df['atr_avg'].iloc[-1]
         vol, vol_avg = df['v'].iloc[-1], df['vol_avg'].iloc[-1]
 
-        # 核心條件判斷
         vol_expand = atr > atr_avg * 1.4
         big_vol = vol > vol_avg * 1.8
         cond = (price > ema20) and vol_expand and big_vol and (slope > 0)
@@ -73,17 +70,14 @@ while True:
             if price > highest: highest = price
             profit_pct = (price - buy_price) / buy_price * 100
             fall_pct = (highest - price) / highest * 100
-
             print(f"持倉 | 入:{buy_price:.0f} 現:{price:.0f} | 賺:{profit_pct:.2f}% | 最高:{highest:.0f} 回落:{fall_pct:.2f}%", flush=True)
 
             if profit_pct >= BIG_WAVE_PCT and fall_pct >= LOCK_FALL_PCT:
                 earn = CAPITAL * profit_pct / 100
                 in_pos, buy_price, highest = False, 0, 0
                 print(f">>> 💰 鎖定賣出 @ {price:.0f} | 獲利 +{profit_pct:.2f}% 賺取 ${earn:.2f}", flush=True)
-                print(f">>> 重置狀態，等待下一次機會...", flush=True)
 
-        time.sleep(300) # 每 5 分鐘檢查一次
-
+        time.sleep(300)
     except Exception as e:
         print(f"Error: {e}", flush=True)
         time.sleep(30)
