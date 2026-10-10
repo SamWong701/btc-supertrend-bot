@@ -5,7 +5,7 @@ from flask import Flask
 # --- 1. Railway 防斷線心跳 ---
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Spot $5000 5% Re-Harvest Running"
+def home(): return "Spot $5000 10% Re-Harvest Running"
 
 def run_web():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
@@ -19,7 +19,7 @@ SYMBOL = "BTCUSDT"
 INTERVAL = "1h"
 EMA_PERIOD = 20
 
-print(f"=== 現貨 ${CAPITAL} | {BIG_WAVE_PCT}%食盡重覆收割啟動 ===", flush=True)
+print(f"=== 現貨 ${CAPITAL} | {BIG_WAVE_PCT:.0f}%食盡重覆收割啟動 ===", flush=True)
 
 def get_df():
     url = f"https://api.binance.com/api/v3/klines?symbol={SYMBOL}&interval={INTERVAL}&limit=200"
