@@ -1,24 +1,39 @@
-import os, time, requests
-import pandas as pd
+import os
+import time
+import requests
 from binance.client import Client
 
+# --- 1. 印IP，方便你去Binance加白名單 ---
+try:
+    ip = requests.get("https://api.ipify.org", timeout=5).text
+    print(f"MY RAILWAY IP IS: {ip} - 請加去Binance白名單!")
+except:
+    print("印唔到IP")
+
+# --- 2. 讀Key ---
 API_KEY = os.getenv("BINANCE_API_KEY")
 API_SECRET = os.getenv("BINANCE_API_SECRET")
 SYMBOL = "BTCUSDT"
 
+if not API_KEY or not API_SECRET:
+    print("Error: BINANCE_API_KEY / SECRET 未Set！去Railway Variables度加！")
+    # 唔好直接死，等佢重試
+    time.sleep(10)
+
 client = Client(API_KEY, API_SECRET)
 
-try:
-    print("MY RAILWAY IP IS:", requests.get("https://ifconfig.me", timeout=5).text)
-except: pass
-
 def get_signal():
-    klines = client.get_klines(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1DAY, limit=50)
-    closes = [float(k[4]) for k in klines]
-    ma20 = sum(closes[-20:])/20
-    return "BUY" if closes[-1] > ma20 else "SELL"
+    try:
+        klines = client.get_klines(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1DAY, limit=30)
+        closes = [float(k[4]) for k in klines]
+        ma20 = sum(closes[-20:]) / 20
+        return "BUY" if closes[-1] > ma20 else "SELL"
+    except Exception as e:
+        print(f"get_signal Error: {e}")
+        return "HOLD"
 
 print("=== 長揸大額現貨 Bot 啟動 ===")
+
 while True:
     try:
         usdt = float(client.get_asset_balance(asset='USDT')['free'])
@@ -33,6 +48,10 @@ while True:
         elif signal == "SELL" and btc*price > 20:
             client.order_market_sell(symbol=SYMBOL, quantity=round(btc,5))
             print("賣出成功")
+        else:
+            print("不操作")
+
     except Exception as e:
         print(f"Error: {e}")
+
     time.sleep(3600)
