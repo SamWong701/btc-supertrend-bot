@@ -15,7 +15,7 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- 2. 策略參數 ---
 CAPITAL = 5000
-BIG_WAVE_PCT = 5.0
+BIG_WAVE_PCT = 10.0
 LOCK_FALL_PCT = 2.0
 SYMBOL = "BTCUSDT"
 INTERVAL = "1h"
